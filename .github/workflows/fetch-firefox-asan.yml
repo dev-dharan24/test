@@ -1,10 +1,9 @@
-name: Fetch Bugzilla WeakMap cases
+name: Fetch sparse Firefox GC source
 
 on:
   push:
     paths:
       - '.github/workflows/fetch-firefox-asan.yml'
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -13,43 +12,46 @@ permissions:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - name: Download public Bugzilla attachment metadata and JavaScript cases
+      - name: Checkout the exact affected Firefox revision sparsely
+        uses: actions/checkout@v4
+        with:
+          repository: dev-dharan24/firefox
+          ref: 2c934dbbd7bdb99f4e4edd7fb22aa06c29192ec6
+          path: firefox
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            js/src/gc/**
+            js/src/jit-test/tests/gc/**
+            js/src/jit-test/tests/weakmap/**
+            js/src/tests/non262/WeakMap/**
+            js/src/tests/non262/gc/**
+            js/public/**
+            mfbt/**
+            modules/libpref/**
+            dom/base/**
+            xpcom/base/**
+
+      - name: Package the checked-out source
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p bug-1991980
-          curl --fail --location --retry 5 --retry-all-errors \
-            'https://bugzilla.mozilla.org/rest/bug/1991980/attachment' \
-            -o bug-1991980/attachments.json
-          python3 - <<'PY'
-          import base64, json, pathlib, re, urllib.request
-          root = pathlib.Path('bug-1991980')
-          data = json.loads((root / 'attachments.json').read_text())
-          attachments = data.get('bugs', {}).get('1991980', [])
-          manifest = []
-          for item in attachments:
-              aid = int(item['id'])
-              name = item.get('file_name') or f'attachment-{aid}'
-              ctype = item.get('content_type', '')
-              manifest.append({'id': aid, 'name': name, 'summary': item.get('summary'), 'content_type': ctype})
-              if ctype not in {'application/x-javascript', 'text/javascript', 'application/javascript'}:
-                  continue
-              url = f'https://bugzilla.mozilla.org/attachment.cgi?id={aid}'
-              with urllib.request.urlopen(url, timeout=30) as response:
-                  raw = response.read()
-              safe = re.sub(r'[^A-Za-z0-9._-]+', '_', name).strip('_') or f'attachment-{aid}.js'
-              if not safe.endswith('.js'):
-                  safe += '.js'
-              (root / f'{aid}-{safe}').write_bytes(raw)
-          (root / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-          print(json.dumps(manifest, indent=2))
-          PY
-          find bug-1991980 -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-      - name: Upload public WeakMap cases
+          git -C firefox rev-parse HEAD | tee SOURCE_REVISION
+          git -C firefox show -s --format=fuller HEAD | tee SOURCE_COMMIT.txt
+          tar --exclude='firefox/.git' -cJf firefox-gc-source-2c934db.tar.xz firefox SOURCE_REVISION SOURCE_COMMIT.txt
+          sha256sum firefox-gc-source-2c934db.tar.xz | tee SHA256SUMS
+          ls -lh firefox-gc-source-2c934db.tar.xz SOURCE_REVISION SOURCE_COMMIT.txt SHA256SUMS
+
+      - name: Upload sparse source archive
         uses: actions/upload-artifact@v4
         with:
-          name: bug-1991980-weakmap-cases
-          path: bug-1991980/
+          name: firefox-gc-source-2c934db
+          path: |
+            firefox-gc-source-2c934db.tar.xz
+            SOURCE_REVISION
+            SOURCE_COMMIT.txt
+            SHA256SUMS
+          compression-level: 0
           retention-days: 1
