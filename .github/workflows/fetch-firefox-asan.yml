@@ -1,4 +1,4 @@
-name: Fetch Firefox ASan artifact
+name: Fetch Bugzilla WeakMap cases
 
 on:
   push:
@@ -13,22 +13,43 @@ permissions:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
-      - name: Download official Mozilla linux64 ASan optimized build
+      - name: Download public Bugzilla attachment metadata and JavaScript cases
         shell: bash
         run: |
           set -euxo pipefail
-          URL='https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.v2.mozilla-central.latest.firefox.linux64-asan-opt/artifacts/public/build/target.tar.xz'
-          curl --fail --location --retry 5 --retry-all-errors --output firefox-asan-target.tar.xz "$URL"
-          sha256sum firefox-asan-target.tar.xz | tee SHA256SUMS
-          ls -lh firefox-asan-target.tar.xz SHA256SUMS
-      - name: Upload browser archive
+          mkdir -p bug-1991980
+          curl --fail --location --retry 5 --retry-all-errors \
+            'https://bugzilla.mozilla.org/rest/bug/1991980/attachment' \
+            -o bug-1991980/attachments.json
+          python3 - <<'PY'
+          import base64, json, pathlib, re, urllib.request
+          root = pathlib.Path('bug-1991980')
+          data = json.loads((root / 'attachments.json').read_text())
+          attachments = data.get('bugs', {}).get('1991980', [])
+          manifest = []
+          for item in attachments:
+              aid = int(item['id'])
+              name = item.get('file_name') or f'attachment-{aid}'
+              ctype = item.get('content_type', '')
+              manifest.append({'id': aid, 'name': name, 'summary': item.get('summary'), 'content_type': ctype})
+              if ctype not in {'application/x-javascript', 'text/javascript', 'application/javascript'}:
+                  continue
+              url = f'https://bugzilla.mozilla.org/attachment.cgi?id={aid}'
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  raw = response.read()
+              safe = re.sub(r'[^A-Za-z0-9._-]+', '_', name).strip('_') or f'attachment-{aid}.js'
+              if not safe.endswith('.js'):
+                  safe += '.js'
+              (root / f'{aid}-{safe}').write_bytes(raw)
+          (root / 'manifest.json').write_text(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2))
+          PY
+          find bug-1991980 -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+      - name: Upload public WeakMap cases
         uses: actions/upload-artifact@v4
         with:
-          name: firefox-linux64-asan-opt
-          path: |
-            firefox-asan-target.tar.xz
-            SHA256SUMS
-          compression-level: 0
+          name: bug-1991980-weakmap-cases
+          path: bug-1991980/
           retention-days: 1
