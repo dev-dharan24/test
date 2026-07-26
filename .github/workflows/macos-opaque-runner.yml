@@ -1,0 +1,66 @@
+name: macOS opaque research batch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-opaque-research-batch
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Check out sealed bundle
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Execute sealed batch
+        id: execute
+        shell: bash
+        env:
+          BUNDLE_KEY: ${{ secrets.OPAQUE_BUNDLE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/opaque-work"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 250000 \
+            -pass env:BUNDLE_KEY -in .opaque/bundle.bin \
+            -out "$RUNNER_TEMP/opaque-work/bundle.tgz"
+          tar -xzf "$RUNNER_TEMP/opaque-work/bundle.tgz" \
+            -C "$RUNNER_TEMP/opaque-work"
+          payload_root="$(find "$RUNNER_TEMP/opaque-work" -mindepth 1 \
+            -maxdepth 2 -type f -name entrypoint.sh -print -quit | xargs dirname)"
+          test -n "$payload_root"
+          set +e
+          "$payload_root/entrypoint.sh" \
+            > "$payload_root/opaque-run.log" 2>&1
+          payload_rc=$?
+          set -e
+          printf '%s\n' "$payload_rc" > "$RUNNER_TEMP/opaque-work/payload.rc"
+          tar -czf "$RUNNER_TEMP/opaque-work/result.tgz" \
+            -C "$payload_root" out opaque-run.log
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 \
+            -pass env:BUNDLE_KEY \
+            -in "$RUNNER_TEMP/opaque-work/result.tgz" \
+            -out "$RUNNER_TEMP/opaque-work/result.bin"
+          echo "payload_rc=$payload_rc" >> "$GITHUB_OUTPUT"
+          echo "SEALED_BATCH_RC=$payload_rc"
+
+      - name: Upload sealed result
+        if: always() && steps.execute.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sealed-macos-result
+          path: ${{ runner.temp }}/opaque-work/result.bin
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Propagate batch status
+        if: always() && steps.execute.outcome == 'success'
+        shell: bash
+        run: exit "${{ steps.execute.outputs.payload_rc }}"
