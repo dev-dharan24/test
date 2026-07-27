@@ -73,7 +73,9 @@ jobs:
             drop="$PWD/out/${mode}-drop.json"
             pb="$PWD/out/${mode}-pasteboard.json"
             result="$PWD/out/${mode}-result.json"
-            python3 - "$marker" "$drop" "$pb" "$result" <<'PY'
+            domlog="$PWD/out/${mode}-dom.jsonl"
+            domsnap="$PWD/out/${mode}-dom-snapshot.json"
+            python3 - "$marker" "$drop" "$pb" "$result" "$domlog" "$domsnap" <<'PY'
           import os,sys
           for p in sys.argv[1:]:
               try: os.unlink(p)
@@ -88,6 +90,8 @@ jobs:
               NATIVE_DRAG_DROP_LOG="$drop" \
               NATIVE_DRAG_PASTEBOARD_LOG="$pb" \
               NATIVE_DRAG_RESULT="$result" \
+              NATIVE_DRAG_DOM_LOG="$domlog" \
+              NATIVE_DRAG_DOM_SNAPSHOT="$domsnap" \
               ./node_modules/.bin/electron . >"out/${mode}-electron.log" 2>&1
             rc=$?
             echo "$rc" >"out/${mode}.rc"
@@ -96,6 +100,8 @@ jobs:
             [[ -f "$drop" ]] && cat "$drop"
             [[ -f "$pb" ]] && cat "$pb"
             [[ -f "$marker" ]] && cat "$marker"
+            [[ -f "$domlog" ]] && cat "$domlog"
+            [[ -f "$domsnap" ]] && cat "$domsnap"
             return "$rc"
           }
 

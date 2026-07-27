@@ -17,6 +17,8 @@ const wrapper = document.getElementById('screenshotWrapper');
 const input = document.getElementById('textToolInput');
 const image = document.getElementById('screenshotImage');
 const dropLog = process.env.NATIVE_DRAG_DROP_LOG || '/tmp/native-html-drag-drop.json';
+const domLog = process.env.NATIVE_DRAG_DOM_LOG || '/tmp/native-html-drag-dom.jsonl';
+function append(obj) { fs.appendFileSync(domLog, JSON.stringify({time:Date.now(), ...obj}) + '\n'); }
 function write(obj) { fs.writeFileSync(dropLog, JSON.stringify({time:Date.now(), ...obj}, null, 2)); }
 // Mirror the screenshot-protection boundary: only the screenshot image is blocked.
 for (const type of ['dragstart','drag','dragend','dragenter','dragover','dragleave','drop']) {
@@ -40,12 +42,13 @@ wrapper.addEventListener('drop', ev => {
          defaultPreventedAtListener:ev.defaultPrevented});
   if (!emoji) {
     document.title = 'DROP_HTML_ONLY:' + types.join(',');
-    setTimeout(() => write({event:'post-default', types, innerHTML:input.innerHTML,
-      iframeCount:input.querySelectorAll('iframe').length}), 150);
+    setTimeout(() => { const rec={event:'post-default', types, innerHTML:input.innerHTML, iframeCount:input.querySelectorAll('iframe').length}; write(rec); append(rec); }, 150);
     return;
   }
   ev.preventDefault();
   document.title = 'DROP_INTERCEPTED';
 });
+for (const type of ['beforeinput','input']) input.addEventListener(type, ev => append({event:type,inputType:ev.inputType||'',html:input.innerHTML}));
+new MutationObserver(() => append({event:'mutation',html:input.innerHTML,iframeCount:input.querySelectorAll('iframe').length})).observe(input,{childList:true,subtree:true,attributes:true});
 input.focus();
 </script>

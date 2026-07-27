@@ -9,6 +9,8 @@ const helper = process.env.DRAG_HELPER;
 const marker = process.env.NATIVE_DRAG_MARKER || '/tmp/native-html-drag-rce';
 const result = process.env.NATIVE_DRAG_RESULT || '/tmp/native-html-drag-result.json';
 const pasteboardLog = process.env.NATIVE_DRAG_PASTEBOARD_LOG || '/tmp/native-html-drag-pasteboard.json';
+const domSnapshotLog = process.env.NATIVE_DRAG_DOM_SNAPSHOT || '/tmp/native-html-drag-dom-snapshot.json';
+let lastDom = null;
 const sx = Number(process.env.DRAG_START_X || 200), sy = Number(process.env.DRAG_START_Y || 350);
 const ex = Number(process.env.DRAG_END_X || 720), ey = Number(process.env.DRAG_END_Y || 350);
 let target, source;
@@ -42,7 +44,15 @@ app.whenReady().then(async () => {
   setTimeout(() => {
     console.log('START_HELPER', helper, sx,sy,ex,ey);
     const p=spawn(helper,[String(sx),String(sy),String(ex),String(ey),pasteboardLog],{stdio:'inherit'});
-    p.on('exit', code => console.log('HELPER_EXIT',code));
+    p.on('exit', code => {
+      console.log('HELPER_EXIT',code);
+      setTimeout(async () => {
+        try {
+          lastDom=await target.webContents.executeJavaScript(`(() => { const e=document.getElementById('textToolInput'); return {html:e&&e.innerHTML, iframeCount:e?e.querySelectorAll('iframe').length:-1, title:document.title}; })()`);
+          fs.writeFileSync(domSnapshotLog,JSON.stringify(lastDom,null,2)); console.log('DOM_SNAPSHOT',JSON.stringify(lastDom));
+        } catch(e) { console.log('DOM_SNAPSHOT_ERROR',String(e)); }
+      },1000);
+    });
   }, 2500);
   const deadline=Date.now()+18000;
   const tick=setInterval(() => {
@@ -53,7 +63,7 @@ app.whenReady().then(async () => {
     if (hit || Date.now()>deadline) {
       clearInterval(tick);
       const id=hit ? fs.readFileSync(marker,'utf8') : '';
-      save({event:'finished', hit, id, url:target.webContents.getURL(), title:target.getTitle(), drop, pasteboard:pb});
+      save({event:'finished', hit, id, url:target.webContents.getURL(), title:target.getTitle(), drop, pasteboard:pb, dom:lastDom});
       console.log('FINAL',fs.readFileSync(result,'utf8'));
       setTimeout(()=>app.exit(hit?0:3),500);
     }

