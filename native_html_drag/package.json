@@ -1,0 +1,9 @@
+{
+  "name": "screensnap-native-html-drag-proof",
+  "private": true,
+  "version": "1.0.0",
+  "main": "main.js",
+  "dependencies": {
+    "electron": "41.9.2"
+  }
+}

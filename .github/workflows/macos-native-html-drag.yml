@@ -1,0 +1,140 @@
+name: macOS native HTML-only drag proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-native-html-drag-proof
+  cancel-in-progress: true
+
+jobs:
+  native-drag:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Check out harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Pin environment and install Electron 41.9.2
+        working-directory: native_html_drag
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -a
+          node --version
+          npm --version
+          npm ci --no-audit --no-fund
+          ./node_modules/.bin/electron --version || true
+          swiftc drag.swift -o drag-helper
+          codesign -s - -f drag-helper
+          mkdir -p out
+          chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+          if [[ -x "$chrome" ]]; then "$chrome" --version | tee out/chrome-version.txt; else echo MISSING_CHROME | tee out/chrome-version.txt; fi
+          python3 - <<'PY'
+          import json,urllib.request
+          data=json.load(urllib.request.urlopen('https://releases.electronjs.org/releases.json'))
+          print(next(x for x in data if x.get('version')=='41.9.2'))
+          PY
+          curl -fsSL 'https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.216/content/app_shim_remote_cocoa/web_drag_source_mac.mm?format=TEXT' \
+            | base64 -d > out/web_drag_source_mac_146.mm
+          nl -ba out/web_drag_source_mac_146.mm | sed -n '166,188p' | tee out/chromium-146-html-plain-branch.txt
+
+      - name: Execute native cross-window drags
+        id: native
+        working-directory: native_html_drag
+        shell: bash
+        run: |
+          set -uo pipefail
+          export DRAG_HTTP_PORT=18765
+          export HTTP_LOG_PATH="$PWD/out/http.jsonl"
+          python3 server.py >out/server.log 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" 2>/dev/null || true
+            if [[ -n "${chrome_pid:-}" ]]; then kill "$chrome_pid" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+          for i in {1..50}; do curl -fsS http://127.0.0.1:18765/source >/dev/null && break; sleep .2; done
+
+          run_drag() {
+            mode="$1"
+            marker="$PWD/out/${mode}-id-marker.txt"
+            drop="$PWD/out/${mode}-drop.json"
+            pb="$PWD/out/${mode}-pasteboard.json"
+            result="$PWD/out/${mode}-result.json"
+            python3 - "$marker" "$drop" "$pb" "$result" <<'PY'
+          import os,sys
+          for p in sys.argv[1:]:
+              try: os.unlink(p)
+              except FileNotFoundError: pass
+          PY
+            set +e
+            env DRAG_SOURCE_MODE="$mode" \
+              DRAG_SOURCE_URL='http://127.0.0.1:18765/source' \
+              DRAG_HELPER="$PWD/drag-helper" \
+              DRAG_START_X=300 DRAG_START_Y=350 \
+              DRAG_END_X=990 DRAG_END_Y=385 \
+              NATIVE_DRAG_MARKER="$marker" \
+              NATIVE_DRAG_DROP_LOG="$drop" \
+              NATIVE_DRAG_PASTEBOARD_LOG="$pb" \
+              NATIVE_DRAG_RESULT="$result" \
+              ./node_modules/.bin/electron . >"out/${mode}-electron.log" 2>&1
+            rc=$?
+            set -e
+            echo "$rc" >"out/${mode}.rc"
+            echo "${mode^^}_RC=$rc"
+            [[ -f "$result" ]] && cat "$result"
+            [[ -f "$drop" ]] && cat "$drop"
+            [[ -f "$pb" ]] && cat "$pb"
+            [[ -f "$marker" ]] && cat "$marker"
+            return "$rc"
+          }
+
+          set +e
+          run_drag electron
+          electron_rc=$?
+          set -e
+
+          chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+          chrome_rc=125
+          if [[ -x "$chrome" ]]; then
+            "$chrome" \
+              --user-data-dir="$RUNNER_TEMP/native-drag-chrome-profile" \
+              --no-first-run --no-default-browser-check --disable-background-mode \
+              --disable-sync --disable-extensions \
+              --window-position=20,30 --window-size=570,680 \
+              'http://127.0.0.1:18765/source' \
+              >out/chrome.log 2>&1 &
+            chrome_pid=$!
+            sleep 5
+            set +e
+            run_drag chrome
+            chrome_rc=$?
+            set -e
+            kill "$chrome_pid" 2>/dev/null || true
+            wait "$chrome_pid" 2>/dev/null || true
+            chrome_pid=''
+          fi
+
+          echo "electron_rc=$electron_rc" >> "$GITHUB_OUTPUT"
+          echo "chrome_rc=$chrome_rc" >> "$GITHUB_OUTPUT"
+          echo "SUMMARY electron=$electron_rc chrome=$chrome_rc"
+          cat out/http.jsonl || true
+          # The pinned Electron native drag is required; Chrome is also required when installed.
+          [[ "$electron_rc" -eq 0 ]] || exit "$electron_rc"
+          [[ "$chrome_rc" -eq 0 || "$chrome_rc" -eq 125 ]] || exit "$chrome_rc"
+
+      - name: Upload native drag evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-native-html-drag-evidence
+          path: native_html_drag/out
+          if-no-files-found: error
+          retention-days: 7

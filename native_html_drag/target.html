@@ -1,0 +1,51 @@
+<!doctype html><meta charset="utf-8"><title>TARGET_READY</title>
+<style>
+html, body { margin:0; height:100%; overflow:hidden; background:rgba(15,23,42,.98); color:white; font:18px system-ui }
+#screenshotWrapper { position:fixed; inset:25px; border:5px solid #64748b; border-radius:20px; background:#1e293b; }
+#screenshotImage { position:absolute; left:10px; top:10px; width:80px; height:80px; background:#334155; }
+#textToolInput { position:absolute; left:45px; top:105px; width:490px; height:410px; padding:18px; outline:8px solid #22c55e; background:white; color:#111827; overflow:auto; }
+#label { pointer-events:none; position:absolute; left:130px; top:30px; }
+</style>
+<div id="screenshotWrapper">
+  <div id="screenshotImage"></div>
+  <div id="label">ScreenSnap-shaped editor target</div>
+  <div id="textToolInput" contenteditable="true">DROP HERE</div>
+</div>
+<script>
+const fs = require('fs');
+const wrapper = document.getElementById('screenshotWrapper');
+const input = document.getElementById('textToolInput');
+const image = document.getElementById('screenshotImage');
+const dropLog = process.env.NATIVE_DRAG_DROP_LOG || '/tmp/native-html-drag-drop.json';
+function write(obj) { fs.writeFileSync(dropLog, JSON.stringify({time:Date.now(), ...obj}, null, 2)); }
+// Mirror the screenshot-protection boundary: only the screenshot image is blocked.
+for (const type of ['dragstart','drag','dragend','dragenter','dragover','dragleave','drop']) {
+  document.addEventListener(type, event => {
+    if (event.target === image) { event.preventDefault(); event.stopPropagation(); }
+  }, true);
+}
+// Mirror EmojiSystem: text/plain or text/emoji is intercepted; HTML-only passes.
+wrapper.addEventListener('dragover', ev => {
+  if (ev.dataTransfer && (ev.dataTransfer.types.includes('text/emoji') || ev.dataTransfer.types.includes('text/plain'))) {
+    ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy';
+  }
+});
+wrapper.addEventListener('drop', ev => {
+  if (!ev.dataTransfer) return;
+  const types = Array.from(ev.dataTransfer.types);
+  const html = ev.dataTransfer.getData('text/html');
+  const plain = ev.dataTransfer.getData('text/plain');
+  const emoji = ev.dataTransfer.getData('text/emoji') || plain;
+  write({event:'drop', target:ev.target && ev.target.id, types, html, plain, emoji,
+         defaultPreventedAtListener:ev.defaultPrevented});
+  if (!emoji) {
+    document.title = 'DROP_HTML_ONLY:' + types.join(',');
+    setTimeout(() => write({event:'post-default', types, innerHTML:input.innerHTML,
+      iframeCount:input.querySelectorAll('iframe').length}), 150);
+    return;
+  }
+  ev.preventDefault();
+  document.title = 'DROP_INTERCEPTED';
+});
+input.focus();
+</script>
