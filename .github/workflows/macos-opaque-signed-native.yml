@@ -1,0 +1,64 @@
+name: macOS opaque signed native validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-opaque-signed-native-rich-input
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Check out sealed validation bundle
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Execute sealed signed-native validation
+        id: execute
+        shell: bash
+        env:
+          BUNDLE_KEY: ${{ secrets.OPAQUE_BUNDLE_KEY }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/opaque-signed-native"
+          mkdir -p "$work"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 250000 \
+            -pass env:BUNDLE_KEY \
+            -in .opaque/signed-native-bundle.bin \
+            -out "$work/bundle.tgz"
+          tar -xzf "$work/bundle.tgz" -C "$work"
+          payload_root="$(find "$work" -mindepth 1 -maxdepth 2 -type f -name entrypoint.sh -print -quit | xargs dirname)"
+          test -n "$payload_root"
+          set +e
+          "$payload_root/entrypoint.sh" > "$payload_root/opaque-run.log" 2>&1
+          payload_rc=$?
+          set -e
+          printf '%s\n' "$payload_rc" > "$work/payload.rc"
+          tar -czf "$work/result.tgz" -C "$payload_root" out opaque-run.log
+          openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 \
+            -pass env:BUNDLE_KEY \
+            -in "$work/result.tgz" \
+            -out "$work/result.bin"
+          echo "payload_rc=$payload_rc" >> "$GITHUB_OUTPUT"
+          echo "SEALED_SIGNED_NATIVE_RC=$payload_rc"
+
+      - name: Upload sealed signed-native result
+        if: always() && steps.execute.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sealed-macos-signed-native-result
+          path: ${{ runner.temp }}/opaque-signed-native/result.bin
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Propagate validation status
+        if: always() && steps.execute.outcome == 'success'
+        shell: bash
+        run: exit "${{ steps.execute.outputs.payload_rc }}"
