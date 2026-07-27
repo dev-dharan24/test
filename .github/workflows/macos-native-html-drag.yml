@@ -65,7 +65,7 @@ jobs:
             if [[ -n "${chrome_pid:-}" ]]; then kill "$chrome_pid" 2>/dev/null || true; fi
           }
           trap cleanup EXIT
-          for i in {1..50}; do curl -fsS http://127.0.0.1:18765/source >/dev/null && break; sleep .2; done
+          for i in {1..50}; do curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:18765/source >/dev/null && break; sleep .2; done
 
           run_drag() {
             mode="$1"
@@ -79,21 +79,19 @@ jobs:
               try: os.unlink(p)
               except FileNotFoundError: pass
           PY
-            set +e
             env DRAG_SOURCE_MODE="$mode" \
               DRAG_SOURCE_URL='http://127.0.0.1:18765/source' \
               DRAG_HELPER="$PWD/drag-helper" \
-              DRAG_START_X=300 DRAG_START_Y=350 \
-              DRAG_END_X=990 DRAG_END_Y=385 \
+              DRAG_START_X=200 DRAG_START_Y=350 \
+              DRAG_END_X=720 DRAG_END_Y=350 \
               NATIVE_DRAG_MARKER="$marker" \
               NATIVE_DRAG_DROP_LOG="$drop" \
               NATIVE_DRAG_PASTEBOARD_LOG="$pb" \
               NATIVE_DRAG_RESULT="$result" \
               ./node_modules/.bin/electron . >"out/${mode}-electron.log" 2>&1
             rc=$?
-            set -e
             echo "$rc" >"out/${mode}.rc"
-            echo "${mode^^}_RC=$rc"
+            echo "MODE=$mode RC=$rc"
             [[ -f "$result" ]] && cat "$result"
             [[ -f "$drop" ]] && cat "$drop"
             [[ -f "$pb" ]] && cat "$pb"
@@ -113,7 +111,7 @@ jobs:
               --user-data-dir="$RUNNER_TEMP/native-drag-chrome-profile" \
               --no-first-run --no-default-browser-check --disable-background-mode \
               --disable-sync --disable-extensions \
-              --window-position=20,30 --window-size=570,680 \
+              --window-position=0,30 --window-size=400,680 \
               'http://127.0.0.1:18765/source' \
               >out/chrome.log 2>&1 &
             chrome_pid=$!

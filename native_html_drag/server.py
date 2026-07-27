@@ -35,7 +35,7 @@ SOURCE = r'''<!doctype html><meta charset="utf-8">
 <title>DRAG_SOURCE_READY</title>
 <style>
 html,body { margin:0; height:100%; background:#f1f5f9; font:20px system-ui; overflow:hidden }
-#drag { position:fixed; left:65px; top:105px; width:440px; height:300px;
+#drag { position:fixed; left:30px; top:105px; width:320px; height:300px;
  display:flex; align-items:center; justify-content:center; text-align:center;
  color:white; background:#7c3aed; border:8px solid #4c1d95; border-radius:25px;
  user-select:none; -webkit-user-drag:element; }
