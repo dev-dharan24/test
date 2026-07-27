@@ -1,0 +1,115 @@
+name: Electron 41.9.2 default native drop control
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: electron-41-default-native-drop-control
+  cancel-in-progress: true
+
+jobs:
+  native-default-drop:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Check out control harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Use Node 24 for Electron installer
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+
+      - name: Pin Electron 41.9.2 and compile native helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -a
+          node --version
+          npm --version
+          npm ci --no-audit --no-fund --prefix native_html_drag
+          native_html_drag/node_modules/.bin/electron --version
+          swiftc default_drop_control/native_source.swift -o default_drop_control/native-source
+          swiftc default_drop_control/native_drag.swift -o default_drop_control/native-drag
+          codesign -s - -f default_drop_control/native-source
+          codesign -s - -f default_drop_control/native-drag
+          mkdir -p default_drop_control/out
+
+      - name: Run URI-list and local-file native drags
+        shell: bash
+        run: |
+          set -uo pipefail
+          electron="$PWD/native_html_drag/node_modules/.bin/electron"
+          source_helper="$PWD/default_drop_control/native-source"
+          drag_helper="$PWD/default_drop_control/native-drag"
+          out="$PWD/default_drop_control/out"
+          overall=0
+          for nav in default enabled; do
+            for kind in uri file; do
+              case_name="${nav}-${kind}"
+              echo "===== CASE $case_name ====="
+              set +e
+              env DROP_NAV_MODE="$nav" DROP_KIND="$kind" \
+                DROP_SOURCE_HELPER="$source_helper" DROP_DRAG_HELPER="$drag_helper" \
+                DROP_OUT_DIR="$out" DROP_MARKER="$out/${case_name}-marker.txt" \
+                DROP_RESULT="$out/${case_name}-result.json" \
+                "$electron" default_drop_control >"$out/${case_name}-electron.log" 2>&1
+              rc=$?
+              set -e
+              echo "$rc" >"$out/${case_name}.rc"
+              echo "CASE=$case_name RC=$rc"
+              cat "$out/${case_name}-result.json" 2>/dev/null || true
+              cat "$out/${case_name}-pasteboard.json" 2>/dev/null || true
+              cat "$out/${case_name}-source-result.json" 2>/dev/null || true
+              cat "$out/${case_name}-marker.txt" 2>/dev/null || true
+              if [[ "$rc" -ne 0 ]]; then overall=1; fi
+            done
+          done
+          exit "$overall"
+
+      - name: Summarize behavior and verify positive controls
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          out=pathlib.Path('default_drop_control/out')
+          rows=[]
+          for nav in ('default','enabled'):
+            for kind in ('uri','file'):
+              case=f'{nav}-{kind}'
+              p=out/f'{case}-result.json'
+              if not p.exists():
+                rows.append((case,'MISSING','','',''))
+                continue
+              d=json.loads(p.read_text())
+              rows.append((case,str(d.get('markerHit')),d.get('finalURL',''),str(d.get('sourceReady')),str(d.get('pasteboardCaptured'))))
+          lines=['# Electron 41.9.2 native default-drop matrix','','| case | Node marker | final URL | source ready | pasteboard captured |','|---|---:|---|---:|---:|']
+          for row in rows: lines.append('| '+' | '.join(x.replace('|','\\|') for x in row)+' |')
+          text='\n'.join(lines)+'\n'
+          print(text)
+          with open(pathlib.Path.home()/'.does-not-exist','w') if False else open(__import__('os').environ['GITHUB_STEP_SUMMARY'],'a') as f: f.write(text)
+          failures=[]
+          for case in ('enabled-uri','enabled-file'):
+            p=out/f'{case}-result.json'
+            if not p.exists() or not json.loads(p.read_text()).get('markerHit'):
+              failures.append(case)
+          if failures:
+            print('POSITIVE_CONTROL_FAILURES='+','.join(failures), file=sys.stderr)
+            sys.exit(1)
+          PY
+
+      - name: Upload exact native-drop evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: electron-41-default-native-drop-evidence
+          path: default_drop_control/out
+          if-no-files-found: error
+          retention-days: 7
