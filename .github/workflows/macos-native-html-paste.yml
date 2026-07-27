@@ -55,7 +55,7 @@ jobs:
           "$chrome" --user-data-dir="$RUNNER_TEMP/native-paste-chrome-profile" \
             --no-first-run --no-default-browser-check --disable-background-mode \
             --disable-sync --disable-extensions --window-position=0,30 --window-size=400,680 \
-            'http://127.0.0.1:18765/source' >out-paste/chrome.log 2>&1 &
+            'http://127.0.0.1:18765/source-topnav' >out-paste/chrome.log 2>&1 &
           chrome_pid=$!
           sleep 5
           marker="$PWD/out-paste/id-marker.txt"
