@@ -1,0 +1,317 @@
+name: ScreenSnap exact signed ssproj LaunchServices one-open gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Built-in automatic import-path candidate
+        required: true
+        default: baseline
+        type: choice
+        options:
+          - baseline
+          - wallpaper-data-svg
+          - wallpaper-file-svg
+          - wallpaper-data-html
+          - webcam-data-html
+          - camera-file-html
+          - track-file-html
+          - javascript-image-url
+          - combined-url-sinks
+      project_zip_url:
+        description: Optional HTTPS ZIP containing exactly one .ssproj package
+        required: false
+        type: string
+      project_zip_sha256:
+        description: Required SHA-256 when project_zip_url is set
+        required: false
+        type: string
+      observation_seconds:
+        description: Marker-only observation window after the single open
+        required: true
+        default: "45"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screensnap-exact-signed-ssproj-launchservices-gate
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      TARGET_URL: https://github.com/iamorgunov/screen-snap-pro-releases/releases/download/v5.4.0/ScreenSnap.Pro-5.4.0-arm64-mac.zip
+      TARGET_SHA256: d31a96f080b108be969182dad7229fbe1da05ec197d630e7208c503590e31f63
+      TARGET_SIZE: "197866314"
+      APP_ASAR_SHA256: 122670dd92e9f5c9a07532a41ae8bd46a31e6b368d514c6be763dc21a8f143e1
+      APP_BINARY_SHA256: 957eb2a9ee30aae776135458de348765d03f49fd8a0a2659f938e37626ad1185
+      APP_INFO_PLIST_SHA256: e3e6b26bbac4f10aa178c1c9e224d35d9eff96c24ea9abe6369c0ea6f3a81d3c
+      FFMPEG_SHA256: eda9db4b680a99b77fd08dd29257014420667647879605adb458c2a4fba81b7a
+      BUNDLE_ID: com.screensnapro.screenshot
+      MARKER_PATH: /tmp/screensnap-ssproj-command-marker
+
+    steps:
+      - name: Check out pinned harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Fetch and verify exact signed publisher application
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out target/app candidate
+          {
+            sw_vers
+            uname -a
+            echo "ARCH=$(uname -m)"
+            sysctl -n kern.osversion | sed 's/^/DARWIN_BUILD=/'
+          } | tee out/environment.txt
+          test "$(uname -m)" = arm64
+
+          ZIP="$RUNNER_TEMP/ScreenSnap.Pro-5.4.0-arm64-mac.zip"
+          curl --fail --location --retry 3 --retry-all-errors "$TARGET_URL" -o "$ZIP"
+          test "$(stat -f %z "$ZIP")" = "$TARGET_SIZE"
+          printf '%s  %s\n' "$TARGET_SHA256" "$ZIP" | shasum -a 256 -c -
+          ditto -x -k "$ZIP" target/app
+          APP="$(find target/app -maxdepth 3 -type d -name 'ScreenSnap Pro.app' -print -quit)"
+          test -n "$APP"
+          test "$(shasum -a 256 "$APP/Contents/Resources/app.asar" | awk '{print $1}')" = "$APP_ASAR_SHA256"
+          test "$(shasum -a 256 "$APP/Contents/MacOS/ScreenSnap Pro" | awk '{print $1}')" = "$APP_BINARY_SHA256"
+          test "$(shasum -a 256 "$APP/Contents/Info.plist" | awk '{print $1}')" = "$APP_INFO_PLIST_SHA256"
+          FFMPEG="$APP/Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg"
+          test -x "$FFMPEG"
+          test "$(shasum -a 256 "$FFMPEG" | awk '{print $1}')" = "$FFMPEG_SHA256"
+          codesign --verify --deep --strict --verbose=4 "$APP" 2>&1 | tee out/codesign-verify.txt
+          codesign -dvvv "$APP" 2>&1 | tee out/codesign-details.txt
+          grep -F 'Authority=Developer ID Application: Iaroslav Morgunov (3A6F572N2P)' out/codesign-details.txt
+          {
+            echo "APP=$APP"
+            echo "FFMPEG=$FFMPEG"
+          } >> "$GITHUB_ENV"
+          {
+            echo "TARGET_ZIP_SHA256=$TARGET_SHA256"
+            echo "APP_ASAR_SHA256=$APP_ASAR_SHA256"
+            echo "APP_BINARY_SHA256=$APP_BINARY_SHA256"
+            echo "APP_INFO_PLIST_SHA256=$APP_INFO_PLIST_SHA256"
+            echo "BUNDLE_ID=$BUNDLE_ID"
+          } | tee out/target-identity.txt
+
+      - name: Assert exact ssproj document association
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$APP/Contents/Info.plist" <<'PY' | tee out/ssproj-document-association.json
+          import json, plistlib, sys
+          p = sys.argv[1]
+          d = plistlib.load(open(p, 'rb'))
+          assert d.get('CFBundleIdentifier') == 'com.screensnapro.screenshot'
+          entries = [x for x in d.get('CFBundleDocumentTypes', []) if 'ssproj' in [str(e).lower() for e in x.get('CFBundleTypeExtensions', [])]]
+          assert len(entries) == 1, entries
+          entry = entries[0]
+          assert entry.get('CFBundleTypeRole') == 'Editor', entry
+          assert entry.get('LSHandlerRank') == 'Default', entry
+          assert entry.get('LSTypeIsPackage') is True, entry
+          print(json.dumps({'bundleId': d['CFBundleIdentifier'], 'entry': entry}, indent=2, sort_keys=True))
+          PY
+
+      - name: Build or unpack crafted project without executing it
+        shell: bash
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          PROJECT_ZIP_URL: ${{ inputs.project_zip_url }}
+          PROJECT_ZIP_SHA256: ${{ inputs.project_zip_sha256 }}
+        run: |
+          set -euo pipefail
+          marker_token="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          project=""
+          if [ -n "$PROJECT_ZIP_URL" ]; then
+            test -n "$PROJECT_ZIP_SHA256"
+            case "$PROJECT_ZIP_URL" in https://*) ;; *) echo 'project_zip_url must use HTTPS' >&2; exit 2;; esac
+            archive="$RUNNER_TEMP/candidate.ssproj.zip"
+            curl --fail --location --retry 3 --retry-all-errors "$PROJECT_ZIP_URL" -o "$archive"
+            printf '%s  %s\n' "$PROJECT_ZIP_SHA256" "$archive" | shasum -a 256 -c -
+            mkdir -p candidate/external
+            ditto -x -k "$archive" candidate/external
+            project="$(python3 - <<'PY'
+          from pathlib import Path
+          projects = sorted(str(p.resolve()) for p in Path('candidate/external').rglob('*.ssproj') if p.is_dir())
+          if len(projects) != 1:
+              raise SystemExit(f'expected exactly one .ssproj directory, found {len(projects)}')
+          if '\n' in projects[0] or '\r' in projects[0]:
+              raise SystemExit('project path contains a newline')
+          print(projects[0])
+          PY
+          )"
+            marker_token="EXTERNAL"
+            printf '{"candidate":"external","archiveSha256":"%s","projectPath":"%s"}\n' \
+              "$PROJECT_ZIP_SHA256" "$project" > out/candidate-manifest.json
+          else
+            project="$GITHUB_WORKSPACE/candidate/${CANDIDATE}.ssproj"
+            mkdir -p "$project"
+            "$FFMPEG" -hide_banner -loglevel error -y \
+              -f lavfi -i 'color=c=black:s=320x180:r=30:d=2' \
+              -an -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$project/screen.mp4"
+            python3 scripts/build_ssproj_launchservices_candidate.py \
+              --candidate "$CANDIDATE" --output "$project" --marker-token "$marker_token" \
+              | tee out/candidate-generator-output.json
+            cp "$project/candidate-manifest.json" out/candidate-manifest.json
+          fi
+          test -d "$project"
+          test "${project##*.}" = ssproj
+          test -f "$project/project.json"
+          python3 -m json.tool "$project/project.json" > out/project.pretty.json
+          python3 - "$project" <<'PY'
+          import hashlib, os, pathlib, stat, sys
+          root = pathlib.Path(sys.argv[1])
+          tree, hashes = [], []
+          for p in sorted([root, *root.rglob('*')], key=lambda x: os.fsencode(str(x))):
+              rel = '.' if p == root else str(p.relative_to(root))
+              st = p.lstat()
+              mode = stat.filemode(st.st_mode)
+              suffix = f' -> {os.readlink(p)}' if p.is_symlink() else ''
+              tree.append(f'{mode} {st.st_size} {rel}{suffix}')
+              if p.is_file() and not p.is_symlink():
+                  h = hashlib.sha256()
+                  with p.open('rb') as f:
+                      for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                          h.update(chunk)
+                  hashes.append(f'{h.hexdigest()}  {rel}')
+          pathlib.Path('out/project-tree.txt').write_text('\n'.join(tree) + '\n')
+          pathlib.Path('out/project-sha256.txt').write_text('\n'.join(hashes) + '\n')
+          PY
+          {
+            echo "PROJECT=$project"
+            echo "MARKER_TOKEN=$marker_token"
+          } >> "$GITHUB_ENV"
+
+          # Candidate construction is not evidence.  The marker must be absent
+          # immediately before the sole LaunchServices open below.
+          rm -f "$MARKER_PATH"
+          test ! -e "$MARKER_PATH"
+          echo 'PREOPEN_MARKER_ABSENT=PASS' | tee out/preopen-marker.txt
+
+      - name: Register exact app without launching
+        shell: bash
+        run: |
+          set -euo pipefail
+          LSREGISTER='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+          test -x "$LSREGISTER"
+          "$LSREGISTER" -f "$APP"
+          "$LSREGISTER" -dump > out/launchservices-dump.txt
+          {
+            grep -n -F "$BUNDLE_ID" out/launchservices-dump.txt
+            grep -n -F "$APP" out/launchservices-dump.txt
+          } > out/launchservices-registration.txt
+          grep -F "$BUNDLE_ID" out/launchservices-registration.txt
+          grep -F "$APP" out/launchservices-registration.txt
+          if pgrep -f "$APP/Contents/MacOS/ScreenSnap Pro" >/dev/null; then
+            echo 'ScreenSnap Pro was already running before the gate' >&2
+            exit 1
+          fi
+          {
+            echo 'OPEN_INTERACTION_COUNT=0'
+            echo 'POST_OPEN_INPUT_COUNT=0'
+            echo 'DEBUGGER_ATTACHED=0'
+            echo 'CDP_USED=0'
+            echo 'QUARTZ_INPUT_USED=0'
+            echo 'ASLR_DISABLED=0'
+          } | tee out/interaction-contract.txt
+
+      - name: Perform exactly one LaunchServices open and observe only
+        shell: bash
+        env:
+          OBSERVATION_SECONDS: ${{ inputs.observation_seconds }}
+        run: |
+          set -euo pipefail
+          case "$OBSERVATION_SECONDS" in ''|*[!0-9]*) echo 'observation_seconds must be an integer' >&2; exit 2;; esac
+          test "$OBSERVATION_SECONDS" -ge 5
+          test "$OBSERVATION_SECONDS" -le 180
+          test ! -e "$MARKER_PATH"
+
+          # These observers start before delivery and never send events or IPC
+          # to ScreenSnap.  They only read process metadata and unified logs.
+          /usr/bin/log stream --style compact --level debug \
+            --predicate 'process == "ScreenSnap Pro" OR process CONTAINS "ScreenSnap Pro Helper"' \
+            > out/unified-log.txt 2>&1 &
+          log_pid=$!
+          (
+            end=$((SECONDS + OBSERVATION_SECONDS + 10))
+            while [ "$SECONDS" -lt "$end" ]; do
+              printf '%s\t' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              ps -axo pid=,ppid=,state=,command= | grep -F 'ScreenSnap Pro.app/Contents/' | grep -v grep || true
+              sleep 0.25
+            done
+          ) > out/process-observer.txt 2>&1 &
+          ps_pid=$!
+
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          open -b "$BUNDLE_ID" "$PROJECT"
+          sed -i '' 's/^OPEN_INTERACTION_COUNT=0$/OPEN_INTERACTION_COUNT=1/' out/interaction-contract.txt
+          echo "LAUNCHSERVICES_OPEN_UTC=$started" | tee out/open-event.txt
+          echo "LAUNCHSERVICES_COMMAND=open -b $BUNDLE_ID <crafted.ssproj>" >> out/open-event.txt
+
+          marker_seen=0
+          deadline=$((SECONDS + OBSERVATION_SECONDS))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if [ -f "$MARKER_PATH" ]; then
+              marker_seen=1
+              cp "$MARKER_PATH" out/command-marker.txt
+              break
+            fi
+            sleep 0.25
+          done
+
+          kill "$log_pid" "$ps_pid" 2>/dev/null || true
+          wait "$log_pid" 2>/dev/null || true
+          wait "$ps_pid" 2>/dev/null || true
+          pgrep -f "$APP/Contents/MacOS/ScreenSnap Pro" | tee out/screensnap-pids.txt || true
+          ps -axo pid=,ppid=,state=,command= | grep -F 'ScreenSnap Pro.app/Contents/' | grep -v grep \
+            | tee out/screensnap-processes-final.txt || true
+
+          if [ "$marker_seen" -eq 1 ] && grep -Fqx "SCREENSNAP_SSProj_COMMAND=$MARKER_TOKEN" out/command-marker.txt; then
+            echo 'COMMAND_MARKER_VALID=1' | tee out/gate-result.txt
+            echo 'SCREENSNAP_EXACT_SIGNED_SSProj_LAUNCHSERVICES_ONE_OPEN_ZERO_POST_INPUT_ACE=PASS' | tee -a out/gate-result.txt
+          else
+            echo 'COMMAND_MARKER_VALID=0' | tee out/gate-result.txt
+            echo 'SCREENSNAP_EXACT_SIGNED_SSProj_LAUNCHSERVICES_ONE_OPEN_ZERO_POST_INPUT_ACE=NO_MARKER' | tee -a out/gate-result.txt
+          fi
+          cat out/interaction-contract.txt | tee -a out/gate-result.txt
+          grep -q '^OPEN_INTERACTION_COUNT=1$' out/interaction-contract.txt
+          grep -q '^POST_OPEN_INPUT_COUNT=0$' out/interaction-contract.txt
+          grep -q '^ASLR_DISABLED=0$' out/interaction-contract.txt
+
+      - name: Package evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          out = pathlib.Path('out')
+          lines = []
+          for p in sorted((x for x in out.rglob('*') if x.is_file() and not x.is_symlink()), key=lambda x: os.fsencode(str(x))):
+              h = hashlib.sha256()
+              with p.open('rb') as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                      h.update(chunk)
+              lines.append(f'{h.hexdigest()}  {p}')
+          (out / 'ALL-SHA256SUMS').write_text('\n'.join(lines) + '\n')
+          PY
+          tar -czf screensnap-ssproj-launchservices-gate.tgz out
+          shasum -a 256 screensnap-ssproj-launchservices-gate.tgz | tee screensnap-ssproj-launchservices-gate.tgz.sha256
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: screensnap-ssproj-launchservices-${{ inputs.candidate }}-${{ github.run_id }}
+          path: |
+            screensnap-ssproj-launchservices-gate.tgz
+            screensnap-ssproj-launchservices-gate.tgz.sha256
+          if-no-files-found: error
+          retention-days: 14
