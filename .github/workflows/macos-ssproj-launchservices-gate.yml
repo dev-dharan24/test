@@ -18,6 +18,7 @@ on:
           - track-file-html
           - javascript-image-url
           - combined-url-sinks
+          - remote-renderer-sinks
       project_zip_url:
         description: Optional HTTPS ZIP containing exactly one .ssproj package
         required: false
@@ -235,6 +236,20 @@ jobs:
 
           # These observers start before delivery and never send events or IPC
           # to ScreenSnap.  They only read process metadata and unified logs.
+          : > out/beacon-requests.jsonl
+          python3 scripts/ssproj_gate_beacon_server.py \
+            --log out/beacon-requests.jsonl --marker-token "$MARKER_TOKEN" \
+            > out/beacon-server.stdout 2> out/beacon-server.stderr &
+          beacon_pid=$!
+          for _ in $(seq 1 40); do
+            if python3 - <<'PY'
+          import socket
+          with socket.create_connection(('127.0.0.1', 18765), timeout=.2): pass
+          PY
+            then break; fi
+            sleep 0.1
+          done
+          kill -0 "$beacon_pid"
           /usr/bin/log stream --style compact --level debug \
             --predicate 'process == "ScreenSnap Pro" OR process CONTAINS "ScreenSnap Pro Helper"' \
             > out/unified-log.txt 2>&1 &
@@ -266,9 +281,10 @@ jobs:
             sleep 0.25
           done
 
-          kill "$log_pid" "$ps_pid" 2>/dev/null || true
+          kill "$log_pid" "$ps_pid" "$beacon_pid" 2>/dev/null || true
           wait "$log_pid" 2>/dev/null || true
           wait "$ps_pid" 2>/dev/null || true
+          wait "$beacon_pid" 2>/dev/null || true
           pgrep -f "$APP/Contents/MacOS/ScreenSnap Pro" | tee out/screensnap-pids.txt || true
           ps -axo pid=,ppid=,state=,command= | grep -F 'ScreenSnap Pro.app/Contents/' | grep -v grep \
             | tee out/screensnap-processes-final.txt || true
@@ -280,6 +296,10 @@ jobs:
             echo 'COMMAND_MARKER_VALID=0' | tee out/gate-result.txt
             echo 'SCREENSNAP_EXACT_SIGNED_SSProj_LAUNCHSERVICES_ONE_OPEN_ZERO_POST_INPUT_ACE=NO_MARKER' | tee -a out/gate-result.txt
           fi
+          beacon_requests="$(wc -l < out/beacon-requests.jsonl | tr -d ' ')"
+          execution_beacons="$(grep -c 'EXECUTED' out/beacon-requests.jsonl || true)"
+          echo "AUTOMATIC_HTTP_REQUESTS=$beacon_requests" | tee -a out/gate-result.txt
+          echo "SCRIPT_EXECUTION_BEACONS=$execution_beacons" | tee -a out/gate-result.txt
           cat out/interaction-contract.txt | tee -a out/gate-result.txt
           grep -q '^OPEN_INTERACTION_COUNT=1$' out/interaction-contract.txt
           grep -q '^POST_OPEN_INPUT_COUNT=0$' out/interaction-contract.txt

