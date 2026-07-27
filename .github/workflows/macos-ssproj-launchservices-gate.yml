@@ -19,6 +19,7 @@ on:
           - javascript-image-url
           - combined-url-sinks
           - remote-renderer-sinks
+          - media-symlink-delete
       project_zip_url:
         description: Optional HTTPS ZIP containing exactly one .ssproj package
         required: false
@@ -37,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: screensnap-exact-signed-ssproj-launchservices-gate
+  group: screensnap-exact-signed-ssproj-launchservices-gate-${{ inputs.candidate }}
   cancel-in-progress: true
 
 jobs:
@@ -188,6 +189,7 @@ jobs:
           {
             echo "PROJECT=$project"
             echo "MARKER_TOKEN=$marker_token"
+            echo "CANDIDATE_NAME=${CANDIDATE:-external}"
           } >> "$GITHUB_ENV"
 
           # Candidate construction is not evidence.  The marker must be absent
@@ -300,6 +302,15 @@ jobs:
           execution_beacons="$(grep -c 'EXECUTED' out/beacon-requests.jsonl || true)"
           echo "AUTOMATIC_HTTP_REQUESTS=$beacon_requests" | tee -a out/gate-result.txt
           echo "SCRIPT_EXECUTION_BEACONS=$execution_beacons" | tee -a out/gate-result.txt
+          if [ "$CANDIDATE_NAME" = 'media-symlink-delete' ]; then
+            outside="$(dirname "$PROJECT")/outside-delete-target"
+            {
+              echo "MEDIA_SYMLINK_IS_LINK=$(test -L "$PROJECT/media" && echo 1 || echo 0)"
+              echo "DELETE_WITNESS_SURVIVES=$(test -e "$outside/delete-me.txt" && echo 1 || echo 0)"
+              echo "PRESERVE_WITNESS_SURVIVES=$(test -e "$outside/preserve-me.mp4" && echo 1 || echo 0)"
+              echo "NESTED_WITNESS_SURVIVES=$(test -e "$outside/nested-directory/nested-witness.txt" && echo 1 || echo 0)"
+            } | tee out/media-symlink-result.txt | tee -a out/gate-result.txt
+          fi
           cat out/interaction-contract.txt | tee -a out/gate-result.txt
           grep -q '^OPEN_INTERACTION_COUNT=1$' out/interaction-contract.txt
           grep -q '^POST_OPEN_INPUT_COUNT=0$' out/interaction-contract.txt

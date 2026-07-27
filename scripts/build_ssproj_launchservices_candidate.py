@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import shutil
 import urllib.parse
 
 
@@ -192,6 +193,38 @@ def build(candidate: str, output: pathlib.Path, marker_token: str) -> dict:
                 "segments": [
                     {
                         "id": "remote-label-segment",
+                        "sourceInMs": 0,
+                        "sourceOutMs": 1000,
+                        "speed": 1,
+                    }
+                ],
+            }
+        ]
+    elif candidate == "media-symlink-delete":
+        # Exact `video-editor:load-project` enumerates project/media without an
+        # lstat/realpath containment check and unlinks every unreferenced entry.
+        # Keep the target inside the ephemeral workflow workspace; this proves
+        # the ScreenSnap-owned automatic primitive without touching real user
+        # data and cannot itself create a command marker.
+        outside = output.parent / "outside-delete-target"
+        outside.mkdir(parents=True, exist_ok=True)
+        (outside / "delete-me.txt").write_text("DELETE_WITNESS\n", encoding="utf-8")
+        shutil.copyfile(screen, outside / "preserve-me.mp4")
+        (outside / "nested-directory").mkdir(exist_ok=True)
+        (outside / "nested-directory" / "nested-witness.txt").write_text(
+            "NESTED_DIRECTORY_SURVIVES_UNLINK\n", encoding="utf-8"
+        )
+        (output / "media").symlink_to("../outside-delete-target", target_is_directory=True)
+        doc["edit"]["tracks"] = [
+            {
+                "id": "preserve-basename-track",
+                "kind": "video",
+                "media": "media/preserve-me.mp4",
+                "label": "preserved external basename",
+                "timelineStartMs": 0,
+                "segments": [
+                    {
+                        "id": "preserve-basename-segment",
                         "sourceInMs": 0,
                         "sourceOutMs": 1000,
                         "speed": 1,
