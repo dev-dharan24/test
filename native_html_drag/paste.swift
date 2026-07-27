@@ -29,7 +29,11 @@ let source=CGPoint(x:sx,y:sy),target=CGPoint(x:tx,y:ty)
 click(source)
 command(8) // ANSI C
 let copied=snapshot("after-command-c")
-click(target)
+click(target) // first click activates the inactive Electron app
+usleep(350_000)
+print("FRONTMOST after-first-target-click=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
+click(target) // second click reaches and focuses the contenteditable
+print("FRONTMOST before-command-v=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
 command(9) // ANSI V
 usleep(1_000_000)
 let after=snapshot("after-command-v")
