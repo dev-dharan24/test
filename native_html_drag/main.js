@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
     await source.loadURL(http);
     source.show(); source.focus();
   }
-  if (mode === 'chrome') {
+  if (mode.startsWith('chrome')) {
     setTimeout(() => {
       const a=spawn('/usr/bin/osascript',['-e','tell application \"Google Chrome\" to activate'],{stdio:'inherit'});
       a.on('exit', c => console.log('CHROME_ACTIVATE_EXIT',c));

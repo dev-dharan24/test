@@ -48,6 +48,14 @@ wrapper.addEventListener('drop', ev => {
   ev.preventDefault();
   document.title = 'DROP_INTERCEPTED';
 });
+input.addEventListener('paste', ev => {
+  const types=Array.from(ev.clipboardData ? ev.clipboardData.types : []);
+  const html=ev.clipboardData ? ev.clipboardData.getData('text/html') : '';
+  const plain=ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+  write({event:'paste',target:ev.target&&ev.target.id,types,html,plain,defaultPreventedAtListener:ev.defaultPrevented});
+  append({event:'paste',target:ev.target&&ev.target.id,types,html,plain,defaultPreventedAtListener:ev.defaultPrevented});
+  setTimeout(() => { const rec={event:'post-paste-default',types,innerHTML:input.innerHTML,iframeCount:input.querySelectorAll('iframe').length}; write(rec); append(rec); },150);
+});
 for (const type of ['beforeinput','input']) input.addEventListener(type, ev => append({event:type,inputType:ev.inputType||'',html:input.innerHTML}));
 new MutationObserver(() => append({event:'mutation',html:input.innerHTML,iframeCount:input.querySelectorAll('iframe').length})).observe(input,{childList:true,subtree:true,attributes:true});
 input.focus();

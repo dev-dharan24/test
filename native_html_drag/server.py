@@ -55,6 +55,16 @@ drag.addEventListener('dragstart', ev => {
 drag.addEventListener('dragend', ev => {
   navigator.sendBeacon('/log?event=dragend&effect=' + encodeURIComponent(ev.dataTransfer.dropEffect));
 });
+document.addEventListener('copy', ev => {
+  ev.clipboardData.clearData();
+  ev.clipboardData.setData('text/html', payload);
+  ev.clipboardData.setData('text/plain', 'ScreenSnap rich-paste carrier');
+  ev.preventDefault();
+  const types = Array.from(ev.clipboardData.types);
+  document.title = 'COPY:' + types.join(',');
+});
+drag.tabIndex = 0;
+drag.focus();
 </script>'''.replace('__DIRECT_B64__', DIRECT_B64)
 
 class Handler(BaseHTTPRequestHandler):

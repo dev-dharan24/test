@@ -1,0 +1,87 @@
+name: macOS native rich-HTML paste proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-native-html-paste-proof
+  cancel-in-progress: true
+
+jobs:
+  native-paste:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Use Node 24 for Electron installer
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install pinned Electron and compile Quartz paste helper
+        working-directory: native_html_drag
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers; uname -a; node --version
+          npm ci --no-audit --no-fund
+          ./node_modules/.bin/electron --version || true
+          swiftc paste.swift -o paste-helper
+          codesign -s - -f paste-helper
+          mkdir -p out-paste
+          chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+          test -x "$chrome"
+          "$chrome" --version | tee out-paste/chrome-version.txt
+      - name: Execute Chrome to Electron native copy-paste
+        id: paste
+        working-directory: native_html_drag
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DRAG_HTTP_PORT=18765
+          export HTTP_LOG_PATH="$PWD/out-paste/http.jsonl"
+          python3 server.py >out-paste/server.log 2>&1 &
+          server_pid=$!
+          chrome_pid=''
+          cleanup() { kill "$server_pid" 2>/dev/null || true; [[ -z "$chrome_pid" ]] || kill "$chrome_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for i in {1..50}; do curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:18765/source >/dev/null && break; sleep .2; done
+          chrome='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+          "$chrome" --user-data-dir="$RUNNER_TEMP/native-paste-chrome-profile" \
+            --no-first-run --no-default-browser-check --disable-background-mode \
+            --disable-sync --disable-extensions --window-position=0,30 --window-size=400,680 \
+            'http://127.0.0.1:18765/source' >out-paste/chrome.log 2>&1 &
+          chrome_pid=$!
+          sleep 5
+          marker="$PWD/out-paste/id-marker.txt"
+          eventlog="$PWD/out-paste/paste-event.json"
+          clipboard="$PWD/out-paste/clipboard.json"
+          result="$PWD/out-paste/result.json"
+          domlog="$PWD/out-paste/dom.jsonl"
+          domsnap="$PWD/out-paste/dom-snapshot.json"
+          set +e
+          env DRAG_SOURCE_MODE='chrome-paste' \
+            DRAG_HELPER="$PWD/paste-helper" \
+            DRAG_START_X=200 DRAG_START_Y=350 DRAG_END_X=720 DRAG_END_Y=350 \
+            NATIVE_DRAG_MARKER="$marker" NATIVE_DRAG_DROP_LOG="$eventlog" \
+            NATIVE_DRAG_PASTEBOARD_LOG="$clipboard" NATIVE_DRAG_RESULT="$result" \
+            NATIVE_DRAG_DOM_LOG="$domlog" NATIVE_DRAG_DOM_SNAPSHOT="$domsnap" \
+            ./node_modules/.bin/electron . >out-paste/electron.log 2>&1
+          rc=$?
+          set -e
+          echo "$rc" >out-paste/rc
+          for f in "$result" "$eventlog" "$clipboard" "$marker" "$domlog" "$domsnap"; do [[ ! -f "$f" ]] || { echo "=== $f ==="; cat "$f"; }; done
+          exit "$rc"
+      - name: Upload native paste evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-native-html-paste-evidence
+          path: native_html_drag/out-paste
+          if-no-files-found: error
+          retention-days: 7
