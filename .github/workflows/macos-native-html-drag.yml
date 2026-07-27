@@ -82,7 +82,7 @@ jobs:
               except FileNotFoundError: pass
           PY
             env DRAG_SOURCE_MODE="$mode" \
-              DRAG_SOURCE_URL='http://127.0.0.1:18765/source' \
+              DRAG_SOURCE_URL='http://127.0.0.1:18765/source-topnav' \
               DRAG_HELPER="$PWD/drag-helper" \
               DRAG_START_X=200 DRAG_START_Y=350 \
               DRAG_END_X=720 DRAG_END_Y=350 \
@@ -118,7 +118,7 @@ jobs:
               --no-first-run --no-default-browser-check --disable-background-mode \
               --disable-sync --disable-extensions \
               --window-position=0,30 --window-size=400,680 \
-              'http://127.0.0.1:18765/source' \
+              'http://127.0.0.1:18765/source-topnav' \
               >out/chrome.log 2>&1 &
             chrome_pid=$!
             sleep 5
