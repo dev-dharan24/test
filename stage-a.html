@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ScreenSnap navigation stage A</title>
+<body>Preparing the next stage…</body>
+<script>
+(() => {
+  const next = new URLSearchParams(location.search).get('next');
+  let target;
+  try { target = new URL(next); } catch (_) {
+    document.body.textContent = 'Missing or invalid next URL';
+    return;
+  }
+  if (!/^https?:$/.test(target.protocol)) {
+    document.body.textContent = 'Unsupported next URL';
+    return;
+  }
+  document.body.textContent = 'Navigating to ' + target.origin + '…';
+  setTimeout(() => { top.location.href = target.href; }, 800);
+})();
+</script>
