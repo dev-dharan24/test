@@ -51,7 +51,7 @@ jobs:
           out="$PWD/default_drop_control/out"
           overall=0
           for nav in default enabled; do
-            for kind in uri file; do
+            for kind in link uri file; do
               case_name="${nav}-${kind}"
               echo "===== CASE $case_name ====="
               set +e
@@ -71,9 +71,27 @@ jobs:
               if [[ "$rc" -ne 0 ]]; then overall=1; fi
             done
           done
+          for kind in uri file; do
+            nav=direct
+            case_name="${nav}-${kind}"
+            echo "===== CASE $case_name ====="
+            set +e
+            env DROP_NAV_MODE="$nav" DROP_KIND="$kind" \
+              DROP_SOURCE_HELPER="$source_helper" DROP_DRAG_HELPER="$drag_helper" \
+              DROP_OUT_DIR="$out" DROP_MARKER="$out/${case_name}-marker.txt" \
+              DROP_RESULT="$out/${case_name}-result.json" \
+              "$electron" default_drop_control >"$out/${case_name}-electron.log" 2>&1
+            rc=$?
+            set -e
+            echo "$rc" >"$out/${case_name}.rc"
+            echo "CASE=$case_name RC=$rc"
+            cat "$out/${case_name}-result.json" 2>/dev/null || true
+            cat "$out/${case_name}-marker.txt" 2>/dev/null || true
+            if [[ "$rc" -ne 0 ]]; then overall=1; fi
+          done
           exit "$overall"
 
-      - name: Summarize behavior and verify positive controls
+      - name: Summarize behavior and verify direct-load controls
         if: always()
         shell: bash
         run: |
@@ -81,8 +99,8 @@ jobs:
           import json, pathlib, sys
           out=pathlib.Path('default_drop_control/out')
           rows=[]
-          for nav in ('default','enabled'):
-            for kind in ('uri','file'):
+          for nav,kinds in (('default',('link','uri','file')),('enabled',('link','uri','file')),('direct',('uri','file'))):
+            for kind in kinds:
               case=f'{nav}-{kind}'
               p=out/f'{case}-result.json'
               if not p.exists():
@@ -96,12 +114,12 @@ jobs:
           print(text)
           with open(pathlib.Path.home()/'.does-not-exist','w') if False else open(__import__('os').environ['GITHUB_STEP_SUMMARY'],'a') as f: f.write(text)
           failures=[]
-          for case in ('enabled-uri','enabled-file'):
+          for case in ('direct-uri','direct-file'):
             p=out/f'{case}-result.json'
             if not p.exists() or not json.loads(p.read_text()).get('markerHit'):
               failures.append(case)
           if failures:
-            print('POSITIVE_CONTROL_FAILURES='+','.join(failures), file=sys.stderr)
+            print('DIRECT_LOAD_CONTROL_FAILURES='+','.join(failures), file=sys.stderr)
             sys.exit(1)
           PY
 
