@@ -29,10 +29,16 @@ let source=CGPoint(x:sx,y:sy),target=CGPoint(x:tx,y:ty)
 click(source)
 command(8) // ANSI C
 let copied=snapshot("after-command-c")
-click(target) // first click activates the inactive Electron app
-usleep(350_000)
-print("FRONTMOST after-first-target-click=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
-click(target) // second click reaches and focuses the contenteditable
+let parentPid = getppid()
+if let targetApp=NSRunningApplication(processIdentifier:parentPid) {
+  let ok=targetApp.activate(options:[.activateAllWindows,.activateIgnoringOtherApps])
+  print("ACTIVATE_PARENT pid=\(parentPid) name=\(targetApp.localizedName ?? "nil") ok=\(ok)")
+} else { print("ACTIVATE_PARENT missing pid=\(parentPid)") }
+usleep(700_000)
+print("FRONTMOST after-activate=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
+click(target)
+usleep(250_000)
+click(target)
 print("FRONTMOST before-command-v=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil")")
 command(9) // ANSI V
 usleep(1_000_000)
