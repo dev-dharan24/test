@@ -44,7 +44,12 @@ jobs:
           payload_rc=$?
           set -e
           printf '%s\n' "$payload_rc" > "$work/payload.rc"
-          tar -czf "$work/result.tgz" -C "$payload_root" out runner.log
+          # Keep the encrypted evidence small; identity hashes and signature logs are retained,
+          # while the reproducibly downloaded DMG and copied app bundle are excluded.
+          tar -czf "$work/result.tgz" \
+            --exclude='out/CleanShot-X-4.8.10.dmg' \
+            --exclude='out/CleanShot-Official.app' \
+            -C "$payload_root" out runner.log
           openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 \
             -pass env:BUNDLE_KEY \
             -in "$work/result.tgz" \
