@@ -1,0 +1,1 @@
+Trigger the temporary pull-request workflow that fetches the official Mozilla linux64 ASan optimized browser artifact.
